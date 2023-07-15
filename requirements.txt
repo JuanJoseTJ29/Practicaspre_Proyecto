@@ -1,0 +1,16 @@
+streamlit
+pip==23.2
+pandas
+base58==2.0.0
+matplotlib
+numpy==1.24.3
+yfinance
+lxml
+pandas_datareader
+tensorflow==2.13.0
+keras
+scikit-learn
+plotly
+yfinance
+
+
