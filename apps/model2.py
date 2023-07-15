@@ -1,67 +1,197 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
+import pandas_datareader as data
+from tensorflow.keras.models import load_model
+from sklearn import svm
+from sklearn.metrics import classification_report
+from sklearn.metrics import confusion_matrix
+from sklearn import metrics
+from sklearn.metrics import roc_curve, auc
+import plotly.graph_objects as go
+import plotly.express as px
 import streamlit as st
+import yfinance as yf
 
 def app():
-    st.title('Model - SVR')
+    st.title('Model - SVC')
 
-    dataset = pd.read_csv('GOOG.csv')
+    #start = '2004-08-18'
+    #end = '2022-01-20'
 
-    # Describiendo los datos
+    start = '2018-1-1'
+    end = '2023-1-1'
     #start = st.date_input('Start' , value=pd.to_datetime('2004-08-18'))
     #end = st.date_input('End' , value=pd.to_datetime('today'))
 
-    #st.title('Predicción de tendencia de acciones')
+    st.title('Predicción de tendencia de acciones')
 
-    #user_input = st.text_input('Introducir cotización bursátil' , 'GOOG')
+    st.markdown(
+         f"""
+         <style>
+         .stApp {{
+             background: url("https://static.vecteezy.com/system/resources/previews/008/884/464/non_2x/trend-up-graph-icon-stock-sign-growth-progress-red-arrow-icon-line-chart-symbol-vector.jpg");
+             background-size: cover
+         }}
+         </style>
+         """,
+         unsafe_allow_html=True
+        
+        )
 
-    #dataset = data.DataReader(user_input, 'yahoo', start, end)
+    user_input = st.text_input('Introducir cotización bursátil' , 'GOOG')
 
-    #st.subheader('Datos a travez del tiempo') 
-    #st.write(dataset.describe())
+    datap = yf.download(user_input, start , end)
+    # df = data.DataReader(user_input, start, end)
 
-     #Visualizaciones 
+    # Describiendo los datos
 
-    X = dataset.iloc[:,4:5].values
-    y = dataset.iloc[:,6:7].values
-     # Ajustes de escalas
-    from sklearn.preprocessing import StandardScaler
-    sc_X = StandardScaler()
-    sc_y = StandardScaler()
-    X = sc_X.fit_transform(X)
-    y = sc_y.fit_transform(y)
-
-    from sklearn.svm import SVR
-    regressor = SVR(kernel = 'rbf')
-    regressor.fit(X, y)
-
-    # prediccion de un nuevo valor
-    x_trans = sc_X.transform([[48.57373]])
-    y_pred = regressor.predict(x_trans)
-    y_pred = sc_y.inverse_transform(y_pred)
-
-    #Graficando los valores reales
-    x_real = sc_X.inverse_transform(X)
-    y_real = sc_y.inverse_transform(y)
-
-    X_grid = np.arange(min(x_real), max(x_real), 0.01) 
-    X_grid = X_grid.reshape((len(X_grid), 1))
-
-    x_grid_transform = sc_X.transform(X_grid)
-
-    y_grid = regressor.predict(x_grid_transform)
-    y_grid_real = sc_y.inverse_transform(y_grid)
-
-    #GRAFICAA
-
-    st.subheader('GRAFICA')
-    fig2 = plt.figure(figsize=(12,6))
-    plt.scatter(x_real, y_real, color = 'red')
-    plt.plot(X_grid, y_grid_real, color = 'blue')
-    plt.title('Modelo SVR')
-    plt.xlabel('Precio')
-    plt.ylabel('Volumen')
-    st.pyplot(fig2)
-
+    st.subheader('Datos del 2018 al 2023') 
+    st.write(datap.describe())
     
+    # Candlestick chart
+    st.subheader('Gráfico Financiero') 
+    candlestick = go.Candlestick(
+                            x=datap.index,
+                            open=datap['Open'],
+                            high=datap['High'],
+                            low=datap['Low'],
+                            close=datap['Close']
+                            )
+
+    fig = go.Figure(data=[candlestick])
+
+    fig.update_layout(
+        width=800, height=600,
+        title=user_input,
+        yaxis_title='Precio'
+    )
+    
+    st.plotly_chart(fig)
+    
+    
+    
+
+    # Añadiendo indicadores para el modelo
+    datap['Open-Close'] = datap.Open - datap.Close
+    datap['High-Low'] = datap.High - datap.Low
+    
+    
+    # Modelo SVC
+    
+    ## Variables predictoras
+    X = datap[['Open-Close', 'High-Low']]
+    ## Variable objetivo
+    y = np.where(datap['Close'].shift(-1) > datap['Close'], 1, 0)
+    ## División data de entrenamiento y prueba
+    split_percentage = 0.8
+    split = int(split_percentage*len(datap))
+    ## Entrenando el dataset
+    X_train = X[:split]
+    y_train = y[:split]
+    ## Testeando el dataset
+    X_test = X[split:]
+    y_test = y[split:]
+    ## Creación del modelo
+    cls = svm.SVC(probability=True).fit(X_train, y_train)
+    ## Predicción del test
+    y_pred = cls.predict(X_test)
+    
+    
+    # Señal de predicción 
+    
+    datap['Predicted_Signal'] = cls.predict(X)
+    ## Añadiendo columna condicional
+    conditionlist = [
+    (datap['Predicted_Signal'] == 1) ,
+    (datap['Predicted_Signal'] == 0)]
+    choicelist = ['Comprar','Vender']
+    datap['Decision'] = np.select(conditionlist, choicelist)
+    st.subheader('Predicción de señal de compra o venta') 
+    st.write(datap)    
+    
+    
+    
+    # Estrategia de Implementación
+    
+    # Cálculo de las devoluciones diarias
+    datap['Return'] = datap.Close.pct_change()
+    # Cálculo de los rendimientos de la estrategia
+    datap['Strategy_Return'] = datap.Return*datap.Predicted_Signal.shift(1)
+    # Cálculo de los rendimientos acumulativos
+    datap['Cum_Ret'] = datap['Return'].cumsum()
+    # Cálculo de los rendimientos acumulativos de la estrategia
+    datap['Cum_Strategy'] = datap['Strategy_Return'].cumsum()
+    # Retornos de la estrategia de trama vs rendimientos originales
+    # # st.subheader('Retornos de la estrategia de trama vs. Rendimientos originales') 
+   # #  fig = px.line(datap,y=['Cum_Ret', 'Cum_Strategy'])
+   # #  st.plotly_chart(fig)
+
+
+    # Visualizando la data 3
+    st.subheader('Precio predecido vs Precio Original')
+    fig9=plt.figure(figsize=(12,6))
+    plt.plot(datap['Cum_Ret'],color='blue' , label = 'Precio Original')
+    plt.plot(datap['Cum_Strategy'],color='red' ,label= 'Precio Predecido')
+   # plt.plot(y_test, 'b', label = 'Precio Original')
+   # plt.plot(predictions, 'r', label= 'Precio Predecido')
+    plt.xlabel('Tiempo')
+    plt.ylabel('Precio')
+    plt.legend()
+    st.pyplot(fig9)
+
+
+   # plt.plot(datap['Cum_Ret'],color='red')
+   # plt.plot(datap['Cum_Strategy'],color='blue')
+    
+    
+    
+
+
+
+
+
+    # Evaluación del modelo
+    
+    st.title('Evaluación del Modelo SVC')
+    ## Matriz de confusión
+    cm = pd.DataFrame(confusion_matrix(y_test, y_pred))
+    st.subheader('Matriz de confusión') 
+    st.write(cm)
+    ## Métricas
+    accuracy = metrics.accuracy_score(y_test, y_pred)
+    precision = metrics.precision_score(y_test, y_pred)
+    sensivity = metrics.recall_score(y_test, y_pred)
+    f1_score = metrics.f1_score(y_test, y_pred)
+    metricas = {
+    'metrica' : ['Exactitud', 'Precisión', 'Sensibilidad','F1-score'],
+    'valor': [accuracy, precision, sensivity,f1_score]
+    }
+    metricas = pd.DataFrame(metricas)  
+    ### Gráfica de las métricas
+    st.subheader('Métricas de rendimiento') 
+    fig = px.bar(        
+        metricas,
+        x = "metrica",
+        y = "valor",
+        title = "Métricas del modelo SVC",
+        color="metrica"
+    )
+    st.plotly_chart(fig)
+    
+    ## Curva ROC
+    ##predictions = cls.predict_proba(X_test)
+    ####predictions = predictions[:, 1]
+    ##cls_fpr, cls_tpr, threshold = roc_curve(y_test, predictions)
+    ##auc_cls = auc(cls_fpr, cls_tpr)
+    ##roc = pd.DataFrame({'fpr': cls_fpr, 'tpr': cls_tpr})
+    ### Gráfica ROC
+    ##st.subheader('ROC Curve') 
+    ### AUC
+    ##st.write('Support Vector Classifier: ROC AUC=%.3f' % (auc_cls))
+    ##fig = px.line(
+    ##roc,    
+    ##x = "fpr",
+    ##y = "tpr"
+    ##)
+    ##st.plotly_chart(fig)
